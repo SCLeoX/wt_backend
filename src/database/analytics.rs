@@ -1,19 +1,20 @@
 use std::convert::TryInto;
-use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use actix::{Actor, Addr, Handler, Message, SyncArbiter, SyncContext};
-use diesel::{Connection, insert_into, sql_query};
+use actix::{Handler, Message};
+use diesel::{insert_into, sql_query};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::Error;
-use diesel::sql_types::{BigInt, VarChar, Bigint};
-use serde::{Serialize, Deserialize};
-
-use dotenv::dotenv;
+use diesel::sql_types::{BigInt, Bigint, VarChar};
 use indoc::indoc;
+use serde::{Deserialize, Serialize};
+
+use super::chapter;
 
 use crate::models::Chapter;
+
+use super::db_executor::DbExecutor;
 
 fn get_current_timestamp() -> i64 {
     SystemTime::now()
@@ -22,44 +23,12 @@ fn get_current_timestamp() -> i64 {
         .as_millis().try_into().expect("Hello future")
 }
 
-pub struct DbExecutor(PgConnection);
-
-impl Actor for DbExecutor {
-    type Context = SyncContext<Self>;
-}
-
-pub fn get_db_executor() -> Addr<DbExecutor> {
-    dotenv().ok();
-    let database_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
-    SyncArbiter::start(4, move || {
-        DbExecutor(PgConnection::establish(&database_url)
-            .unwrap_or_else(|_| panic!("Error connecting to {}.", database_url)))
-    })
-}
-
 pub struct RecordVisit {
     pub relative_path: String,
 }
 
 impl Message for RecordVisit {
     type Result = Result<(), Error>;
-}
-
-fn get_chapter(connection: &PgConnection, relative_path_value: &str) -> Result<Chapter, Error> {
-    use crate::schema::chapters::dsl::*;
-    let chapter: Option<Chapter> = chapters
-        .filter(relative_path.eq(relative_path_value))
-        .first::<Chapter>(connection)
-        .optional()?;
-    if let Some(chapter) = chapter {
-        Ok(chapter)
-    } else {
-        let row: Chapter = insert_into(chapters)
-            .values(relative_path.eq(relative_path_value))
-            .get_result(connection)?;
-        Ok(row)
-    }
 }
 
 fn inc_visit(connection: &PgConnection, chapter: &Chapter) -> Result<(), Error> {
@@ -75,7 +44,7 @@ impl Handler<RecordVisit> for DbExecutor {
 
     fn handle(&mut self, msg: RecordVisit, _: &mut Self::Context) -> Self::Result {
         let connection = &self.0;
-        let chapter = get_chapter(connection, msg.relative_path.as_str())?;
+        let chapter = chapter::get_chapter(connection, msg.relative_path.as_str())?;
         use crate::schema::visits::dsl::*;
         insert_into(visits)
             .values((
@@ -163,13 +132,13 @@ impl Handler<ListChapterRecent> for DbExecutor {
 
         #[derive(QueryableByName)]
         struct RecentAggregateResult {
-            #[sql_type="VarChar"]
+            #[sql_type = "VarChar"]
             relative_path: String,
-            #[sql_type="BigInt"]
+            #[sql_type = "BigInt"]
             visit_count: i64,
         }
 
-        let showing_chapters: Vec<RecentAggregateResult> = sql_query(indoc!("
+        let query = indoc! {"
             SELECT chapters.relative_path, count(1) as visit_count FROM visits
                 LEFT JOIN chapters
                     ON visits.chapter_id = chapters.id
@@ -178,7 +147,8 @@ impl Handler<ListChapterRecent> for DbExecutor {
                 ORDER BY visit_count DESC
                 LIMIT $2
                 OFFSET $3
-        "))
+        "};
+        let showing_chapters: Vec<RecentAggregateResult> = sql_query(query)
             .bind::<Bigint, i64>(get_current_timestamp() - msg.time_frame.get_milliseconds())
             .bind::<Bigint, i64>(PAGE_SIZE.into())
             .bind::<Bigint, i64>(((msg.page - 1) * PAGE_SIZE).into())
