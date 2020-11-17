@@ -1,6 +1,3 @@
-use std::convert::TryInto;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use actix::{Handler, Message};
 use diesel::{insert_into, sql_query};
 use diesel::pg::PgConnection;
@@ -10,18 +7,10 @@ use diesel::sql_types::{BigInt, Bigint, VarChar};
 use indoc::indoc;
 use serde::{Deserialize, Serialize};
 
-use super::chapter;
-
 use crate::models::Chapter;
 
+use super::common;
 use super::db_executor::DbExecutor;
-
-fn get_current_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis().try_into().expect("Hello future")
-}
 
 pub struct RecordVisit {
     pub relative_path: String,
@@ -44,12 +33,12 @@ impl Handler<RecordVisit> for DbExecutor {
 
     fn handle(&mut self, msg: RecordVisit, _: &mut Self::Context) -> Self::Result {
         let connection = &self.0;
-        let chapter = chapter::get_chapter(connection, msg.relative_path.as_str())?;
+        let chapter = common::get_chapter(connection, msg.relative_path.as_str())?;
         use crate::schema::visits::dsl::*;
         insert_into(visits)
             .values((
                 chapter_id.eq(chapter.id),
-                timestamp.eq(get_current_timestamp())
+                timestamp.eq(common::get_current_timestamp())
             ))
             .execute(connection)?;
         inc_visit(connection, &chapter)?;
@@ -149,7 +138,7 @@ impl Handler<ListChapterRecent> for DbExecutor {
                 OFFSET $3
         "};
         let showing_chapters: Vec<RecentAggregateResult> = sql_query(query)
-            .bind::<Bigint, i64>(get_current_timestamp() - msg.time_frame.get_milliseconds())
+            .bind::<Bigint, i64>(common::get_current_timestamp() - msg.time_frame.get_milliseconds())
             .bind::<Bigint, i64>(PAGE_SIZE.into())
             .bind::<Bigint, i64>(((msg.page - 1) * PAGE_SIZE).into())
             .get_results(connection)?;

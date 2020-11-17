@@ -4,6 +4,7 @@ CREATE TABLE public.users(
     email varchar(255),
     user_name varchar(255) NOT NULL,
     display_name varchar(255) NOT NULL,
+    disabled bool NOT NULL DEFAULT FALSE,
     PRIMARY KEY (id),
     CONSTRAINT email_unique UNIQUE (email),
     CONSTRAINT user_name_unique UNIQUE (user_name),
@@ -13,13 +14,16 @@ CREATE TABLE public.users(
 CREATE TABLE public.comments(
     id bigserial NOT NULL,
     chapter_id integer NOT NULL,
+    user_id bigint NOT NULL,
     content varchar(4096) NOT NULL,
-    deleted bool NOT NULL,
+    deleted bool NOT NULL DEFAULT FALSE,
     create_timestamp bigint NOT NULL,
     update_timestamp bigint NOT NULL,
     PRIMARY KEY (id),
     CONSTRAINT chapter_id_fkey FOREIGN KEY (chapter_id)
-        REFERENCES public.chapters (id)
+        REFERENCES public.chapters (id),
+    CONSTRAINT user_id_fkey FOREIGN KEY  (user_id)
+        REFERENCES public.users (id)
 );
 
 CREATE TABLE public.mentions(

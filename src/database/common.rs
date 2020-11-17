@@ -1,3 +1,6 @@
+use std::convert::TryInto;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use diesel::{insert_into};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
@@ -19,4 +22,11 @@ pub fn get_chapter(connection: &PgConnection, relative_path_value: &str) -> Resu
             .get_result(connection)?;
         Ok(row)
     }
+}
+
+pub fn get_current_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis().try_into().expect("Hello future")
 }

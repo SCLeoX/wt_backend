@@ -1,17 +1,38 @@
 #[macro_use]
 extern crate diesel;
-
-use actix_cors::Cors;
+#[macro_use]
+extern crate lazy_static;
 
 use actix::Addr;
-use actix_web::{App, FromRequest, HttpResponse, HttpServer, Responder, web};
+use actix_cors::Cors;
+use actix_web::{App, FromRequest, HttpResponse, HttpServer, Responder, web, Either};
+use rand::Rng;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use database::DbExecutor;
 use error::WTError;
 
-use crate::database::{get_db_executor, ListChaptersAll, RecordVisit, TimeFrame, ListChapterRecent, Init, Register, RegisterResult};
-use rand::Rng;
+use crate::database::{get_db_executor, Init, ListChapterRecent, ListChaptersAll, RecordVisit, Register, RegisterResult, TimeFrame, SendComment, GetUser, AddMentions};
+
+pub const TOKEN_LENGTH: usize = 32;
+pub const MAX_USER_NAME_BYTES: usize = 64;
+pub const MAX_EMAIL_BYTES: usize = 128;
+pub const MAX_COMMENT_BYTES: usize = 4096;
+pub const MAX_PAGE_NAME_BYTES: usize = 1024;
+pub const MAX_MENTIONS_PER_COMMENT: usize = 5;
+
+#[derive(Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+enum ErrorCode {
+    UserNameDuplicated = 1,
+    EmailDuplicated = 2,
+    UserNameTooLong = 3,
+    EmailTooLong = 4,
+    EmailInvalid = 5,
+    CommentTooLong = 6,
+}
 
 pub mod schema;
 mod models;
@@ -55,21 +76,54 @@ async fn init_handler(state: web::Data<AppState>, query: web::Query<InitQuery>) 
     }
 }
 
+#[derive(Serialize)]
+struct ErrorResponse {
+    success: bool,
+    code: ErrorCode,
+}
+
+fn error_response(code: ErrorCode) -> HttpResponse {
+    HttpResponse::Forbidden().json(ErrorResponse { success: false, code })
+}
+
+#[derive(Serialize)]
+struct SimpleSuccessResponse {
+    success: bool,
+}
+
+fn simple_success() -> HttpResponse {
+    HttpResponse::Ok().json(SimpleSuccessResponse { success: true })
+}
+
 #[derive(Deserialize)]
-struct RegisterData {
+struct RegisterPayload {
     user_name: String,
     email: Option<String>,
 }
 #[derive(Serialize)]
-#[serde(untagged)]
-enum RegisterResponse {
-    Ok { success: bool, token: String },
-    Err { success: bool, code: i32 },
+struct RegisterResponse {
+    success: bool,
+    token: String,
 }
-async fn register_handler(state: web::Data<AppState>, payload: web::Json<RegisterData>) -> Result<impl Responder, WTError> {
+async fn register_handler(state: web::Data<AppState>, payload: web::Json<RegisterPayload>) -> Result<impl Responder, WTError> {
+    if payload.user_name.len() > MAX_USER_NAME_BYTES {
+        return Ok(error_response(ErrorCode::UserNameTooLong));
+    }
+    if let Some(email) = &payload.email {
+        if email.len() > MAX_EMAIL_BYTES {
+            return Ok(error_response(ErrorCode::EmailTooLong ));
+        }
+        lazy_static! {
+            static ref EMAIL_REGEX: Regex = Regex::new("^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9-.]+$").unwrap();
+        }
+        if !EMAIL_REGEX.is_match(email) {
+            return Ok(error_response(ErrorCode::EmailInvalid));
+        }
+    }
+
     let token: String = rand::thread_rng()
         .sample_iter(rand::distributions::Alphanumeric)
-        .take(32)
+        .take(TOKEN_LENGTH)
         .collect();
     let display_name = payload.user_name.replace(' ', "_");
     match state.db.send(Register {
@@ -79,23 +133,67 @@ async fn register_handler(state: web::Data<AppState>, payload: web::Json<Registe
         token: token.clone(),
     }).await?? {
         RegisterResult::Ok => {
-            Ok(HttpResponse::Ok().json(RegisterResponse::Ok {
-                success: true,
-                token,
-            }))
-        }
-        RegisterResult::DuplicatedEmail => {
-            Ok(HttpResponse::Forbidden().json(RegisterResponse::Err {
-                success: false,
-                code: 1,
-            }))
+            Ok(HttpResponse::Ok().json(RegisterResponse { success: true, token }))
         }
         RegisterResult::DuplicatedUserName => {
-            Ok(HttpResponse::Forbidden().json(RegisterResponse::Err {
-                success: false,
-                code: 2,
-            }))
+            Ok(error_response(ErrorCode::UserNameDuplicated))
         }
+        RegisterResult::DuplicatedEmail => {
+            Ok(error_response(ErrorCode::EmailDuplicated ))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SendCommentPayload {
+    token: String,
+    relative_path: String,
+    content: String,
+}
+async fn send_comment_handler(state: web::Data<AppState>, payload: web::Json<SendCommentPayload>) -> Result<Either<impl Responder, impl Responder>, WTError> {
+    let payload = payload.0;
+    if payload.content.len() > MAX_COMMENT_BYTES {
+        return Ok(Either::A(error_response(ErrorCode::CommentTooLong)));
+    }
+    if (payload.token.len() != TOKEN_LENGTH) || (payload.relative_path.len() > MAX_PAGE_NAME_BYTES) {
+        return Ok(Either::B(HttpResponse::Forbidden()));
+    }
+    let user = state.db.send(GetUser {
+        token: payload.token,
+    }).await??;
+    if let Some(user) = user {
+        lazy_static! {
+            static ref MENTION_REGEX: Regex = Regex::new("@(\\S+)(?:\\s|$)").unwrap();
+        }
+        let current_timestamp = database::get_current_timestamp();
+        // Get mentions first, but insert them later
+        let mut mentions_count = 0;
+        let mut mentioned = Vec::with_capacity(5);
+        for capture in MENTION_REGEX.captures_iter(&payload.content) {
+            mentioned.push(capture[1].to_owned());
+            mentions_count += 1;
+            if mentions_count >= MAX_MENTIONS_PER_COMMENT {
+                break;
+            }
+        }
+        mentioned.sort();
+        mentioned.dedup();
+        let send_comment_result = state.db.send(SendComment {
+            user_id: user.id,
+            relative_path: payload.relative_path,
+            content: payload.content,
+            current_timestamp,
+        }).await??;
+        if mentioned.len() >= 1 {
+            state.db.send(AddMentions {
+                comment_id: send_comment_result.comment_id,
+                mentioned,
+                current_timestamp,
+            }).await??;
+        }
+        Ok(Either::A(simple_success()))
+    } else {
+        return Ok(Either::B(HttpResponse::Forbidden()));
     }
 }
 
@@ -124,7 +222,7 @@ async fn main() -> std::io::Result<()> {
             .service(
                 web::resource("/count")
                     .app_data(String::configure(|cfg| {
-                        cfg.limit(1024)
+                        cfg.limit(MAX_PAGE_NAME_BYTES)
                     }))
                     .route(web::post().to(count_handler))
             )
@@ -143,6 +241,10 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/register",
                 web::post().to(register_handler),
+            )
+            .route(
+                "/sendComment",
+                web::post().to(send_comment_handler),
             )
     })
         .bind("127.0.0.1:8088")?

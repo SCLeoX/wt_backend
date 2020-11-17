@@ -22,6 +22,7 @@ pub struct Visit {
 pub struct Comment {
     pub id: i64,
     pub chapter_id: i32,
+    pub user_id: i64,
     pub content: String,
     pub deleted: bool,
     pub create_timestamp: i64,
@@ -43,4 +44,5 @@ pub struct User {
     pub email: Option<String>,
     pub user_name: String,
     pub display_name: String,
+    pub disabled: bool,
 }

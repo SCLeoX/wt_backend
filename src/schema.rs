@@ -10,6 +10,7 @@ table! {
     comments (id) {
         id -> Int8,
         chapter_id -> Int4,
+        user_id -> Int8,
         content -> Varchar,
         deleted -> Bool,
         create_timestamp -> Int8,
@@ -33,6 +34,7 @@ table! {
         email -> Nullable<Varchar>,
         user_name -> Varchar,
         display_name -> Varchar,
+        disabled -> Bool,
     }
 }
 
@@ -44,6 +46,7 @@ table! {
     }
 }
 
+joinable!(comments -> users (user_id));
 joinable!(mentions -> comments (from_comment_id));
 joinable!(mentions -> users (mentioned_user_id));
 
