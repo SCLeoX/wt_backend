@@ -37,7 +37,9 @@ pub struct Mention {
     pub timestamp: i64,
 }
 
-#[derive(Identifiable, Queryable)]
+#[derive(Identifiable, Queryable, AsChangeset)]
+#[table_name = "users"]
+#[changeset_options(treat_none_as_null = "true")]
 pub struct User {
     pub id: i64,
     pub token: String,
@@ -45,4 +47,5 @@ pub struct User {
     pub user_name: String,
     pub display_name: String,
     pub disabled: bool,
+    pub last_checked_mentions_timestamp: i64,
 }

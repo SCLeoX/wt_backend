@@ -5,6 +5,7 @@ CREATE TABLE public.users(
     user_name varchar(255) NOT NULL,
     display_name varchar(255) NOT NULL,
     disabled bool NOT NULL DEFAULT FALSE,
+    last_checked_mentions_timestamp bigint NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     CONSTRAINT email_unique UNIQUE (email),
     CONSTRAINT user_name_unique UNIQUE (user_name),

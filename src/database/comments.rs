@@ -2,7 +2,6 @@ use actix::{Handler, Message};
 use diesel::result::Error;
 use diesel::prelude::*;
 use diesel::{PgConnection};
-use serde::Serialize;
 
 use super::db_executor::DbExecutor;
 use super::common;
@@ -45,9 +44,7 @@ impl Handler<GetUser> for DbExecutor {
 
 pub struct Init {
     pub token: String,
-    pub since: i64,
 }
-#[derive(Serialize)]
 pub struct InitResult {
     pub user_name: String,
     pub display_name: String,
@@ -64,7 +61,7 @@ impl Handler<Init> for DbExecutor {
         if let Some(user) = get_user(connection, &msg.token)? {
             use crate::schema::mentions::dsl::*;
             let new_mentions: i64 = mentions
-                .filter(timestamp.ge(msg.since))
+                .filter(timestamp.ge(user.last_checked_mentions_timestamp))
                 .filter(mentioned_user_id.eq(user.id))
                 .count()
                 .get_result(connection)?;
@@ -89,7 +86,7 @@ pub struct Register {
 }
 pub enum RegisterResult {
     Ok,
-    DuplicatedUserName,
+    DuplicatedName,
     DuplicatedEmail,
 }
 impl Message for Register {
@@ -105,7 +102,7 @@ impl Handler<Register> for DbExecutor {
             display_name.eq(&msg.display_name)
                 .or(user_name.eq(&msg.user_name))
         ))).get_result(connection)? {
-            return Ok(RegisterResult::DuplicatedUserName);
+            return Ok(RegisterResult::DuplicatedName);
         }
         if let Some(user_email) = &msg.email {
             if select(exists(users.filter(email.eq(user_email)))).get_result(connection)? {
@@ -171,20 +168,71 @@ impl Handler<AddMentions> for DbExecutor {
 
     fn handle(&mut self, msg: AddMentions, _: &mut Self::Context) -> Self::Result {
         let connection = &self.0;
-        for mentioned_user_name in msg.mentioned {
-            let user = get_user_by_user_name(connection, &mentioned_user_name)?;
-            if let Some(user) = user {
-                use crate::schema::mentions::dsl::*;
-                use diesel::dsl::*;
-                insert_into(mentions)
-                    .values((
-                        from_comment_id.eq(msg.comment_id),
-                        mentioned_user_id.eq(user.id),
-                        timestamp.eq(msg.current_timestamp)
-                    ))
-                    .execute(connection)?;
+        connection.transaction::<(), Error, _>(|| {
+            for mentioned_user_name in msg.mentioned {
+                let user = get_user_by_user_name(connection, &mentioned_user_name)?;
+                if let Some(user) = user {
+                    use crate::schema::mentions::dsl::*;
+                    use diesel::dsl::*;
+                    insert_into(mentions)
+                        .values((
+                            from_comment_id.eq(msg.comment_id),
+                            mentioned_user_id.eq(user.id),
+                            timestamp.eq(msg.current_timestamp)
+                        ))
+                        .execute(connection)?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
+    }
+}
+
+pub struct UpdateProfile {
+    pub token: String,
+    pub display_name: String,
+    pub email: Option<String>,
+}
+pub enum UpdateProfileResult {
+    Ok,
+    InvalidToken,
+    DuplicatedEmail,
+    DuplicatedName,
+}
+impl Message for UpdateProfile {
+    type Result = Result<UpdateProfileResult, Error>;
+}
+impl Handler<UpdateProfile> for DbExecutor {
+    type Result = Result<UpdateProfileResult, Error>;
+
+    fn handle(&mut self, msg: UpdateProfile, _: &mut Self::Context) -> Self::Result {
+        let connection = &self.0;
+        connection.transaction::<UpdateProfileResult, Error, _>(|| {
+            use crate::schema::users::dsl::*;
+            use diesel::dsl::*;
+            let user = get_user(connection, &msg.token)?;
+            if let Some(mut user) = user {
+                if select(exists(users
+                    .filter(token.ne(&msg.token))
+                    .filter(display_name.eq(&msg.display_name))
+                )).get_result(connection)? {
+                    return Ok(UpdateProfileResult::DuplicatedName);
+                }
+                if let Some(user_email) = &msg.email {
+                    if select(exists(users
+                        .filter(token.ne(&msg.token))
+                        .filter(email.eq(user_email))
+                    )).get_result(connection)? {
+                        return Ok(UpdateProfileResult::DuplicatedEmail);
+                    }
+                }
+                user.email = msg.email;
+                user.display_name = msg.display_name;
+                user.save_changes::<User>(connection)?;
+                Ok(UpdateProfileResult::Ok)
+            } else {
+                Ok(UpdateProfileResult::InvalidToken)
+            }
+        })
     }
 }

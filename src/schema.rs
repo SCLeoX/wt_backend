@@ -35,6 +35,7 @@ table! {
         user_name -> Varchar,
         display_name -> Varchar,
         disabled -> Bool,
+        last_checked_mentions_timestamp -> Int8,
     }
 }
 

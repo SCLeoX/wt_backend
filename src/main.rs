@@ -14,7 +14,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 use database::DbExecutor;
 use error::WTError;
 
-use crate::database::{get_db_executor, Init, ListChapterRecent, ListChaptersAll, RecordVisit, Register, RegisterResult, TimeFrame, SendComment, GetUser, AddMentions};
+use crate::database::{get_db_executor, Init, ListChapterRecent, ListChaptersAll, RecordVisit, Register, RegisterResult, TimeFrame, SendComment, GetUser, AddMentions, UpdateProfile, UpdateProfileResult};
 
 pub const TOKEN_LENGTH: usize = 32;
 pub const MAX_USER_NAME_BYTES: usize = 64;
@@ -26,12 +26,13 @@ pub const MAX_MENTIONS_PER_COMMENT: usize = 5;
 #[derive(Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 enum ErrorCode {
-    UserNameDuplicated = 1,
+    NameDuplicated = 1,
     EmailDuplicated = 2,
-    UserNameTooLong = 3,
+    NameTooLong = 3,
     EmailTooLong = 4,
     EmailInvalid = 5,
     CommentTooLong = 6,
+    TokenInvalid = 7,
 }
 
 pub mod schema;
@@ -63,27 +64,46 @@ async fn chapter_recent_handler(state: web::Data<AppState>, query: web::Query<Ch
     Ok(HttpResponse::Ok().json(result))
 }
 
-#[derive(Deserialize)]
-struct InitQuery {
-    token: String,
-    since: i64,
-}
-async fn init_handler(state: web::Data<AppState>, query: web::Query<InitQuery>) -> Result<impl Responder, WTError> {
-    if let Some(result) = state.db.send(Init { token: query.0.token, since: query.0.since }).await?? {
-        Ok(HttpResponse::Ok().json(result))
-    } else {
-        Ok(HttpResponse::Forbidden().body("Invalid token"))
-    }
-}
-
 #[derive(Serialize)]
 struct ErrorResponse {
     success: bool,
+}
+fn error_response() -> HttpResponse {
+    HttpResponse::Forbidden().json(ErrorResponse { success: false })
+}
+#[derive(Serialize)]
+struct ErrorResponseWithCode {
+    success: bool,
     code: ErrorCode,
 }
+fn error_response_with_code(code: ErrorCode) -> HttpResponse {
+    HttpResponse::Forbidden().json(ErrorResponseWithCode { success: false, code })
+}
 
-fn error_response(code: ErrorCode) -> HttpResponse {
-    HttpResponse::Forbidden().json(ErrorResponse { success: false, code })
+#[derive(Deserialize)]
+struct InitQuery {
+    token: String,
+}
+#[derive(Serialize)]
+struct InitResponse {
+    success: bool,
+    user_name: String,
+    display_name: String,
+    email: Option<String>,
+    mentions: i64,
+}
+async fn init_handler(state: web::Data<AppState>, query: web::Query<InitQuery>) -> Result<impl Responder, WTError> {
+    if let Some(result) = state.db.send(Init { token: query.0.token }).await?? {
+        Ok(HttpResponse::Ok().json(InitResponse {
+            success: true,
+            user_name: result.user_name,
+            display_name: result.display_name,
+            email: result.email,
+            mentions: result.mentions,
+        }))
+    } else {
+        Ok(error_response())
+    }
 }
 
 #[derive(Serialize)]
@@ -95,9 +115,27 @@ fn simple_success() -> HttpResponse {
     HttpResponse::Ok().json(SimpleSuccessResponse { success: true })
 }
 
+fn validate_display_name(user_name: &str) -> Option<ErrorCode> {
+    if user_name.len() > MAX_USER_NAME_BYTES {
+        return Some(ErrorCode::NameTooLong);
+    }
+    None
+}
+fn validate_email(email: &str) -> Option<ErrorCode> {
+    if email.len() > MAX_EMAIL_BYTES {
+        return Some(ErrorCode::EmailTooLong);
+    }
+    lazy_static! {
+            static ref EMAIL_REGEX: Regex = Regex::new("^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9-.]+$").unwrap();
+        }
+    if !EMAIL_REGEX.is_match(email) {
+        return Some(ErrorCode::EmailInvalid);
+    }
+    None
+}
 #[derive(Deserialize)]
 struct RegisterPayload {
-    user_name: String,
+    display_name: String,
     email: Option<String>,
 }
 #[derive(Serialize)]
@@ -106,18 +144,12 @@ struct RegisterResponse {
     token: String,
 }
 async fn register_handler(state: web::Data<AppState>, payload: web::Json<RegisterPayload>) -> Result<impl Responder, WTError> {
-    if payload.user_name.len() > MAX_USER_NAME_BYTES {
-        return Ok(error_response(ErrorCode::UserNameTooLong));
+    if let Some(error_code) = validate_display_name(&payload.display_name) {
+        return Ok(error_response_with_code(error_code));
     }
     if let Some(email) = &payload.email {
-        if email.len() > MAX_EMAIL_BYTES {
-            return Ok(error_response(ErrorCode::EmailTooLong ));
-        }
-        lazy_static! {
-            static ref EMAIL_REGEX: Regex = Regex::new("^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9-.]+$").unwrap();
-        }
-        if !EMAIL_REGEX.is_match(email) {
-            return Ok(error_response(ErrorCode::EmailInvalid));
+        if let Some(error_code) = validate_email(&email) {
+            return Ok(error_response_with_code(error_code));
         }
     }
 
@@ -125,24 +157,60 @@ async fn register_handler(state: web::Data<AppState>, payload: web::Json<Registe
         .sample_iter(rand::distributions::Alphanumeric)
         .take(TOKEN_LENGTH)
         .collect();
-    let display_name = payload.user_name.replace(' ', "_");
+    let user_name = payload.display_name.replace(' ', "_").to_ascii_lowercase();
     match state.db.send(Register {
-        user_name: payload.0.user_name,
-        display_name,
+        user_name,
+        display_name: payload.0.display_name,
         email: payload.0.email,
         token: token.clone(),
     }).await?? {
         RegisterResult::Ok => {
             Ok(HttpResponse::Ok().json(RegisterResponse { success: true, token }))
         }
-        RegisterResult::DuplicatedUserName => {
-            Ok(error_response(ErrorCode::UserNameDuplicated))
+        RegisterResult::DuplicatedName => {
+            Ok(error_response_with_code(ErrorCode::NameDuplicated))
         }
         RegisterResult::DuplicatedEmail => {
-            Ok(error_response(ErrorCode::EmailDuplicated ))
+            Ok(error_response_with_code(ErrorCode::EmailDuplicated ))
         }
     }
 }
+
+#[derive(Deserialize)]
+struct UpdateProfilePayload {
+    token: String,
+    display_name: String,
+    email: Option<String>,
+}
+async fn update_profile_handler(state: web::Data<AppState>, payload: web::Json<UpdateProfilePayload>) -> Result<impl Responder, WTError> {
+    if let Some(error_code) = validate_display_name(&payload.display_name) {
+        return Ok(error_response_with_code(error_code));
+    }
+    if let Some(email) = &payload.email {
+        if let Some(error_code) = validate_email(email) {
+            return Ok(error_response_with_code(error_code));
+        }
+    }
+    match state.db.send(UpdateProfile {
+        token: payload.0.token,
+        display_name: payload.0.display_name,
+        email: payload.0.email,
+    }).await?? {
+        UpdateProfileResult::Ok => {
+            Ok(simple_success())
+        }
+        UpdateProfileResult::InvalidToken => {
+            Ok(error_response_with_code(ErrorCode::TokenInvalid))
+        }
+        UpdateProfileResult::DuplicatedName => {
+            Ok(error_response_with_code(ErrorCode::NameDuplicated))
+        }
+        UpdateProfileResult::DuplicatedEmail => {
+            Ok(error_response_with_code(ErrorCode::EmailDuplicated ))
+        }
+    }
+}
+
 
 #[derive(Deserialize)]
 struct SendCommentPayload {
@@ -153,7 +221,7 @@ struct SendCommentPayload {
 async fn send_comment_handler(state: web::Data<AppState>, payload: web::Json<SendCommentPayload>) -> Result<Either<impl Responder, impl Responder>, WTError> {
     let payload = payload.0;
     if payload.content.len() > MAX_COMMENT_BYTES {
-        return Ok(Either::A(error_response(ErrorCode::CommentTooLong)));
+        return Ok(Either::A(error_response_with_code(ErrorCode::CommentTooLong)));
     }
     if (payload.token.len() != TOKEN_LENGTH) || (payload.relative_path.len() > MAX_PAGE_NAME_BYTES) {
         return Ok(Either::B(HttpResponse::Forbidden()));
@@ -245,6 +313,10 @@ async fn main() -> std::io::Result<()> {
             .route(
                 "/sendComment",
                 web::post().to(send_comment_handler),
+            )
+            .route(
+                "/updateProfile",
+                web::post().to(update_profile_handler),
             )
     })
         .bind("127.0.0.1:8088")?
