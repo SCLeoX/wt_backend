@@ -5,7 +5,11 @@ use diesel::{PgConnection};
 
 use super::db_executor::DbExecutor;
 use super::common;
-use crate::models::User;
+use crate::models::{User, Comment};
+use crate::schema::users;
+use crate::schema::comments;
+use crate::schema::chapters;
+use crate::schema::mentions;
 
 pub fn get_user(connection: &PgConnection, token_value: &str) -> Result<Option<User>, Error> {
     if token_value.len() != 32 {
@@ -117,7 +121,7 @@ impl Handler<Register> for DbExecutor {
                 token.eq(msg.token),
             ))
             .execute(connection)?;
-        return Ok(RegisterResult::Ok);
+        Ok(RegisterResult::Ok)
     }
 }
 
@@ -208,20 +212,18 @@ impl Handler<UpdateProfile> for DbExecutor {
     fn handle(&mut self, msg: UpdateProfile, _: &mut Self::Context) -> Self::Result {
         let connection = &self.0;
         connection.transaction::<UpdateProfileResult, Error, _>(|| {
-            use crate::schema::users::dsl::*;
-            use diesel::dsl::*;
             let user = get_user(connection, &msg.token)?;
             if let Some(mut user) = user {
-                if select(exists(users
-                    .filter(token.ne(&msg.token))
-                    .filter(display_name.eq(&msg.display_name))
+                if diesel::select(diesel::dsl::exists(users::table
+                    .filter(users::token.ne(&msg.token))
+                    .filter(users::display_name.eq(&msg.display_name))
                 )).get_result(connection)? {
                     return Ok(UpdateProfileResult::DuplicatedName);
                 }
                 if let Some(user_email) = &msg.email {
-                    if select(exists(users
-                        .filter(token.ne(&msg.token))
-                        .filter(email.eq(user_email))
+                    if diesel::select(diesel::dsl::exists(users::table
+                        .filter(users::token.ne(&msg.token))
+                        .filter(users::email.eq(user_email))
                     )).get_result(connection)? {
                         return Ok(UpdateProfileResult::DuplicatedEmail);
                     }
@@ -234,5 +236,78 @@ impl Handler<UpdateProfile> for DbExecutor {
                 Ok(UpdateProfileResult::InvalidToken)
             }
         })
+    }
+}
+
+pub struct GetChapterComments {
+    pub chapter_relative_path: String,
+}
+impl Message for GetChapterComments {
+    type Result = Result<Vec<(String, Comment, User)>, Error>;
+}
+impl Handler<GetChapterComments> for DbExecutor {
+    type Result = Result<Vec<(String, Comment, User)>, Error>;
+
+    fn handle(&mut self, msg: GetChapterComments, _: &mut Self::Context) -> Self::Result {
+        let connection = &self.0;
+        let result: Vec<(String, Comment, User)> = chapters::table
+            .inner_join(comments::table.inner_join(users::table))
+            .select((chapters::relative_path, comments::table::all_columns(), users::table::all_columns()))
+            .filter(chapters::relative_path.eq(&msg.chapter_relative_path))
+            .filter(comments::deleted.eq(false))
+            .order_by(comments::id.desc())
+            .load(connection)?;
+        Ok(result)
+    }
+}
+
+const RECENT_COMMENTS_AMOUNT: i64 = 50;
+
+pub struct GetRecentComments();
+impl Message for GetRecentComments {
+    type Result = Result<Vec<(String, Comment, User)>, Error>;
+}
+impl Handler<GetRecentComments> for DbExecutor {
+    type Result = Result<Vec<(String, Comment, User)>, Error>;
+
+    fn handle(&mut self, _: GetRecentComments, _: &mut Self::Context) -> Self::Result {
+        let connection = &self.0;
+        let result: Vec<(String, Comment, User)> = comments::table
+            .inner_join(users::table)
+            .inner_join(chapters::table)
+            .select((chapters::relative_path, comments::table::all_columns(), users::table::all_columns()))
+            .filter(comments::deleted.eq(false))
+            .order_by(comments::id.desc())
+            .limit(RECENT_COMMENTS_AMOUNT)
+            .load(connection)?;
+        Ok(result)
+    }
+}
+
+pub struct GetRecentMentionedComments {
+    pub token: String,
+}
+impl Message for GetRecentMentionedComments {
+    type Result = Result<Vec<(String, Comment, User)>, Error>;
+}
+impl Handler<GetRecentMentionedComments> for DbExecutor {
+    type Result = Result<Vec<(String, Comment, User)>, Error>;
+
+    fn handle(&mut self, msg: GetRecentMentionedComments, _: &mut Self::Context) -> Self::Result {
+        let connection = &self.0;
+        let user = get_user(connection, &msg.token)?;
+        if let Some(user) = user {
+            let result: Vec<(String, Comment, User)> = mentions::table
+                .inner_join(comments::table.inner_join(chapters::table).inner_join(users::table))
+                .select((chapters::relative_path, comments::table::all_columns(), users::table::all_columns()))
+                .filter(comments::deleted.eq(false))
+                .filter(mentions::mentioned_user_id.eq(user.id))
+                .order_by(comments::id.desc())
+                .limit(RECENT_COMMENTS_AMOUNT)
+                .load(connection)?;
+            Ok(result)
+        } else {
+            Ok(vec![])
+        }
     }
 }

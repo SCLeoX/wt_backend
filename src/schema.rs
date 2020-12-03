@@ -48,6 +48,7 @@ table! {
 }
 
 joinable!(comments -> users (user_id));
+joinable!(comments -> chapters (chapter_id));
 joinable!(mentions -> comments (from_comment_id));
 joinable!(mentions -> users (mentioned_user_id));
 

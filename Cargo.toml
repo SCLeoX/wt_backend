@@ -20,3 +20,7 @@ rand = "0.7.3"
 regex = "1"
 lazy_static = "1.4.0"
 serde_repr = "0.1.6"
+seahash = "4.0.1"
+md5 = "0.7.0"
+percent-encoding = "2.1.0"
+
