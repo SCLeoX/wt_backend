@@ -1,8 +1,8 @@
 use crate::schema::chapters;
-use crate::schema::visits;
 use crate::schema::comments;
 use crate::schema::mentions;
 use crate::schema::users;
+use crate::schema::visits;
 
 #[derive(Identifiable, Queryable)]
 pub struct Chapter {

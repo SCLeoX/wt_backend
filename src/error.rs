@@ -1,8 +1,9 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fmt;
+
 use actix_web::{error, HttpResponse};
-use actix_web::http::{StatusCode, header};
+use actix_web::http::{header, StatusCode};
 
 #[derive(Debug)]
 pub enum WTError {

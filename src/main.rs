@@ -7,10 +7,9 @@ use std::env;
 
 use actix_cors::Cors;
 use actix_web::{App, HttpServer};
-use dotenv::dotenv;
-
-use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::PgConnection;
+use diesel::r2d2::{ConnectionManager, Pool};
+use dotenv::dotenv;
 
 pub mod schema;
 mod models;
