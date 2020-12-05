@@ -6,10 +6,10 @@ use actix_web::http::{StatusCode, header};
 
 #[derive(Debug)]
 pub enum WTError {
-    InternalError(Box<dyn Error>),
+    InternalError(Box<dyn Error + Send>),
 }
 
-impl<T: Error + 'static> From<T> for WTError {
+impl<T: Error + Send + 'static> From<T> for WTError {
     fn from(error: T) -> Self {
         WTError::InternalError(Box::new(error))
     }
