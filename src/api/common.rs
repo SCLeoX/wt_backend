@@ -26,6 +26,7 @@ pub enum ErrorCode {
     TokenInvalid = 7,
     NameTooShort = 8,
     CommentTooShort = 9,
+    NameInvalid = 10,
 }
 
 pub fn get_chapter(connection: &PgConnection, relative_path_value: &str) -> Result<Chapter, Error> {

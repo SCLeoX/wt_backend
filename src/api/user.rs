@@ -21,12 +21,18 @@ const MAX_USER_NAME_BYTES: usize = 64;
 const MIN_USER_NAME_BYTES: usize = 3;
 const MAX_EMAIL_BYTES: usize = 128;
 
-fn validate_display_name(user_name: &str) -> Option<ErrorCode> {
-    if user_name.len() > MAX_USER_NAME_BYTES {
+fn validate_display_name(display_name: &str) -> Option<ErrorCode> {
+    if display_name.len() > MAX_USER_NAME_BYTES {
         return Some(ErrorCode::NameTooLong);
     }
-    if user_name.len() < MIN_USER_NAME_BYTES {
+    if display_name.len() < MIN_USER_NAME_BYTES {
         return Some(ErrorCode::NameTooShort);
+    }
+    lazy_static! {
+        static ref DISPLAY_NAME_REGEX: Regex = Regex::new("^\\S.+\\S$").unwrap();
+    }
+    if !DISPLAY_NAME_REGEX.is_match(display_name) || display_name.chars().any(|char| char.is_control()) {
+        return Some(ErrorCode::NameInvalid);
     }
     None
 }
