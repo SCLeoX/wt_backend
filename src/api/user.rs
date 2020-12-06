@@ -14,7 +14,7 @@ use crate::api::common;
 use crate::api::common::{APIResult, ErrorCode};
 use crate::error::WTError;
 use crate::models::User;
-use crate::schema::{mentions, users};
+use crate::schema::{comments, mentions, users};
 
 pub const TOKEN_LENGTH: usize = 32;
 const MAX_USER_NAME_BYTES: usize = 64;
@@ -59,6 +59,18 @@ pub fn get_user(connection: &DbConnection, token: &str) -> Result<Option<User>, 
     Ok(user)
 }
 
+pub fn get_user_id(connection: &DbConnection, token: &str) -> Result<Option<i64>, Error> {
+    if !is_token(token) {
+        return Ok(None);
+    }
+    let user_id: Option<i64> = users::table
+        .filter(users::token.eq(token))
+        .select(users::id)
+        .first(connection)
+        .optional()?;
+    Ok(user_id)
+}
+
 #[derive(Deserialize)]
 struct InitQuery {
     token: String,
@@ -78,8 +90,10 @@ async fn init_handler(state: web::Data<AppState>, query: web::Json<InitQuery>) -
     let connection = state.db_pool.get()?;
     if let Some(user) = web::block(move || get_user(&connection, &query.token)).await? {
         let statement = mentions::table
+            .inner_join(comments::table)
             .filter(mentions::timestamp.ge(user.last_checked_mentions_timestamp))
             .filter(mentions::mentioned_user_id.eq(user.id))
+            .filter(comments::deleted.eq(false))
             .count();
         let connection = state.db_pool.get()?;
         let new_mentions: i64 = web::block(move || statement.get_result(&connection)).await?;
@@ -107,7 +121,14 @@ struct RegisterResponse {
     user_name: String,
 }
 
-fn register<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, user_name: String, display_name: String, email: Option<String>) -> Result<APIResult<RegisterResponse>, WTError> {
+fn register<TCon: Deref<Target=DbConnection>>(
+    connection: TCon,
+    token: String,
+    user_name: String,
+    display_name: String,
+    email: Option<String>,
+    current_timestamp: i64
+) -> Result<APIResult<RegisterResponse>, WTError> {
     if diesel::select(diesel::dsl::exists(users::table.filter(
         users::display_name.eq(&display_name)
             .or(users::user_name.eq(&user_name))))).get_result(&*connection)? {
@@ -125,6 +146,7 @@ fn register<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, u
             users::display_name.eq(&display_name),
             users::email.eq(&email),
             users::token.eq(&token),
+            users::last_checked_mentions_timestamp.eq(current_timestamp)
         )).execute(&*connection)?;
     Ok(APIResult::success_return(RegisterResponse { token, user_name }))
 }
@@ -145,12 +167,14 @@ async fn register_handler(state: web::Data<AppState>, payload: web::Json<Registe
         .collect();
     let user_name = payload.display_name.replace(' ', "_").to_ascii_lowercase();
     let connection = state.db_pool.get()?;
+    let current_timestamp = common::get_current_timestamp();
     Ok(Either::B(web::block(move || register(
         connection,
         token,
         user_name,
         payload.0.display_name,
         payload.0.email,
+        current_timestamp
     )).await?.into_responder()))
 }
 

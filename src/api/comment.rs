@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use actix_web::{Either, get, HttpResponse, post, Responder, web};
 use actix_web::dev::HttpServiceFactory;
-use diesel::insert_into;
+use diesel::{insert_into, update};
 use diesel::prelude::*;
 use percent_encoding::NON_ALPHANUMERIC;
 use regex::Regex;
@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AppState, DbConnection};
 use crate::api::common::ErrorCode;
-use crate::api::user::get_user;
 use crate::dark_colors::DARK_COLORS;
 use crate::error::WTError;
 use crate::models::{Comment, User};
@@ -20,6 +19,7 @@ use crate::schema::mentions;
 use crate::schema::users;
 
 use super::common;
+use super::user;
 
 pub const MAX_COMMENT_BYTES: usize = 4096;
 pub const MIN_COMMENT_BYTES: usize = 1;
@@ -27,7 +27,7 @@ pub const MAX_MENTIONS_PER_COMMENT: usize = 5;
 const RECENT_COMMENTS_AMOUNT: i64 = 50;
 
 #[derive(Deserialize)]
-struct SendCommentPayload {
+struct SendPayload {
     token: String,
     relative_path: String,
     content: String,
@@ -41,14 +41,14 @@ fn send<TCon: Deref<Target=DbConnection>>(
     current_timestamp: i64,
     mentioned: Vec<String>,
 ) -> Result<bool, WTError> {
-    let user = get_user(&connection, &token)?;
-    if let Some(user) = user {
+    let user_id = user::get_user_id(&connection, &token)?;
+    if let Some(user_id) = user_id {
         connection.transaction::<bool, WTError, _>(|| {
             let chapter = common::get_chapter(&*connection, &relative_path)?;
             let comment_id: i64 = insert_into(comments::table)
                 .values((
                     comments::chapter_id.eq(chapter.id),
-                    comments::user_id.eq(user.id),
+                    comments::user_id.eq(user_id),
                     comments::content.eq(&content),
                     comments::deleted.eq(false),
                     comments::create_timestamp.eq(current_timestamp),
@@ -77,7 +77,7 @@ fn send<TCon: Deref<Target=DbConnection>>(
 }
 
 #[post("/send")]
-async fn send_handler(state: web::Data<AppState>, payload: web::Json<SendCommentPayload>) -> Result<impl Responder, WTError> {
+async fn send_handler(state: web::Data<AppState>, payload: web::Json<SendPayload>) -> Result<impl Responder, WTError> {
     let payload = payload.0;
     if payload.content.len() > MAX_COMMENT_BYTES {
         return Ok(Either::A(common::error_response_with_code(ErrorCode::CommentTooLong)));
@@ -85,7 +85,7 @@ async fn send_handler(state: web::Data<AppState>, payload: web::Json<SendComment
     if payload.content.len() < MIN_COMMENT_BYTES {
         return Ok(Either::A(common::error_response_with_code(ErrorCode::CommentTooShort)));
     }
-    if (!super::user::is_token(&payload.token)) || (!common::is_page_name(&payload.relative_path)) {
+    if (!user::is_token(&payload.token)) || (!common::is_page_name(&payload.relative_path)) {
         return Ok(Either::B(HttpResponse::Forbidden()));
     }
     lazy_static! {
@@ -171,7 +171,7 @@ fn convert_comment_query_results_to_response(comment_query_result: CommentQueryR
 }
 
 #[derive(Deserialize)]
-struct GetChapterCommentsQuery {
+struct GetChapterQuery {
     relative_path: String,
 }
 
@@ -186,7 +186,7 @@ fn get_chapter<TCon: Deref<Target=DbConnection>>(connection: TCon, relative_path
 }
 
 #[get("/getChapter")]
-async fn get_chapter_handler(state: web::Data<AppState>, query: web::Query<GetChapterCommentsQuery>) -> Result<Either<impl Responder, impl Responder>, WTError> {
+async fn get_chapter_handler(state: web::Data<AppState>, query: web::Query<GetChapterQuery>) -> Result<Either<impl Responder, impl Responder>, WTError> {
     if !common::is_page_name(&query.relative_path) {
         return Ok(Either::B(HttpResponse::Forbidden()));
     }
@@ -214,12 +214,12 @@ async fn get_recent_comments_handler(state: web::Data<AppState>) -> Result<impl 
 }
 
 #[derive(Deserialize)]
-struct GetRecentMentionedCommentsPayload {
+struct GetRecentMentionedPayload {
     token: String,
 }
 
 fn get_recent_mentioned<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, current_timestamp: i64) -> Result<CommentQueryResults, WTError> {
-    let user = get_user(&connection, &token)?;
+    let user = user::get_user(&connection, &token)?;
     if let Some(user) = user {
         diesel::update(&user)
             .set(users::last_checked_mentions_timestamp.eq(current_timestamp))
@@ -238,8 +238,8 @@ fn get_recent_mentioned<TCon: Deref<Target=DbConnection>>(connection: TCon, toke
 }
 
 #[post("/getRecentMentioned")]
-async fn get_recent_mentioned_comments_handler(state: web::Data<AppState>, payload: web::Json<GetRecentMentionedCommentsPayload>) -> Result<impl Responder, WTError> {
-    if !super::user::is_token(&payload.token) {
+async fn get_recent_mentioned_comments_handler(state: web::Data<AppState>, payload: web::Json<GetRecentMentionedPayload>) -> Result<impl Responder, WTError> {
+    if !user::is_token(&payload.token) {
         return Ok(Either::B(HttpResponse::Forbidden()));
     }
     let connection = state.db_pool.get()?;
@@ -248,10 +248,48 @@ async fn get_recent_mentioned_comments_handler(state: web::Data<AppState>, paylo
     Ok(Either::A(HttpResponse::Ok().json(convert_comment_query_results_to_response(results))))
 }
 
+#[derive(Deserialize)]
+struct DeletePayload {
+    comment_id: i64,
+    token: String,
+}
+
+fn delete<TCon: Deref<Target=DbConnection>>(connection: TCon, comment_id: i64, token: String) -> Result<bool, WTError> {
+    // Diesel does not support update/deleted with joined table
+    // https://github.com/diesel-rs/diesel/issues/1478
+    let user_id = user::get_user_id(&connection, &token)?;
+    if let Some(user_id) = user_id {
+        let affected = update(comments::table
+            .filter(comments::id.eq(comment_id))
+            .filter(comments::deleted.eq(false))
+            .filter(comments::user_id.eq(user_id))
+        )
+            .set(comments::deleted.eq(true))
+            .execute(&*connection)?;
+        Ok(affected == 1)
+    } else {
+        Ok(true)
+    }
+}
+
+#[post("/delete")]
+async fn delete_handler(state: web::Data<AppState>, payload: web::Json<DeletePayload>) -> Result<impl Responder, WTError> {
+    if !user::is_token(&payload.token) {
+        return Ok(Either::B(HttpResponse::Forbidden()));
+    }
+    let connection = state.db_pool.get()?;
+    if web::block(move || delete(connection, payload.comment_id, payload.0.token)).await? {
+        Ok(Either::A(common::simple_success()))
+    } else {
+        Ok(Either::B(HttpResponse::Forbidden()))
+    }
+}
+
 pub fn get_service() -> impl HttpServiceFactory {
     web::scope("/comment")
         .service(send_handler)
         .service(get_chapter_handler)
         .service(get_recent_comments_handler)
         .service(get_recent_mentioned_comments_handler)
+        .service(delete_handler)
 }
