@@ -3,6 +3,7 @@ use crate::schema::comments;
 use crate::schema::mentions;
 use crate::schema::users;
 use crate::schema::visits;
+use crate::schema::wtcup_2020_votes;
 
 #[derive(Identifiable, Queryable)]
 pub struct Chapter {
@@ -29,6 +30,9 @@ pub struct Comment {
     pub update_timestamp: i64,
 }
 
+joinable!(comments -> users (user_id));
+joinable!(comments -> chapters (chapter_id));
+
 #[derive(Identifiable, Queryable)]
 pub struct Mention {
     pub id: i64,
@@ -49,3 +53,14 @@ pub struct User {
     pub disabled: bool,
     pub last_checked_mentions_timestamp: i64,
 }
+
+#[derive(Identifiable, Queryable)]
+#[table_name = "wtcup_2020_votes"]
+pub struct WTCup2020Vote {
+    pub id: i64,
+    pub user_id: i64,
+    pub chapter_vote_id: i16,
+    pub rating: i16,
+}
+
+joinable!(wtcup_2020_votes -> users (user_id));

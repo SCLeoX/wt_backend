@@ -259,11 +259,10 @@ fn delete<TCon: Deref<Target=DbConnection>>(connection: TCon, comment_id: i64, t
     // https://github.com/diesel-rs/diesel/issues/1478
     let user_id = user::get_user_id(&connection, &token)?;
     if let Some(user_id) = user_id {
-        let affected = update(comments::table
+        let affected = update(comments::table)
             .filter(comments::id.eq(comment_id))
             .filter(comments::deleted.eq(false))
             .filter(comments::user_id.eq(user_id))
-        )
             .set(comments::deleted.eq(true))
             .execute(&*connection)?;
         Ok(affected == 1)

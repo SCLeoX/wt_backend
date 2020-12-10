@@ -29,7 +29,7 @@ fn validate_display_name(display_name: &str) -> Option<ErrorCode> {
         return Some(ErrorCode::NameTooShort);
     }
     lazy_static! {
-        static ref DISPLAY_NAME_REGEX: Regex = Regex::new("^\\S.+\\S$").unwrap();
+        static ref DISPLAY_NAME_REGEX: Regex = Regex::new("^\\S(.*\\S)?$").unwrap();
     }
     if !DISPLAY_NAME_REGEX.is_match(display_name) || display_name.chars().any(|char| char.is_control()) {
         return Some(ErrorCode::NameInvalid);

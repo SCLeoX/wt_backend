@@ -47,8 +47,15 @@ table! {
     }
 }
 
-joinable!(comments -> users (user_id));
-joinable!(comments -> chapters (chapter_id));
+table! {
+    wtcup_2020_votes (id) {
+        id -> Int8,
+        user_id -> Int8,
+        chapter_vote_id -> Int2,
+        rating -> Int2,
+    }
+}
+
 joinable!(mentions -> comments (from_comment_id));
 joinable!(mentions -> users (mentioned_user_id));
 
@@ -58,4 +65,5 @@ allow_tables_to_appear_in_same_query!(
     mentions,
     users,
     visits,
+    wtcup_2020_votes,
 );
