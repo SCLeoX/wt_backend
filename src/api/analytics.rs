@@ -90,6 +90,17 @@ async fn chapter_all_handler(state: web::Data<AppState>, query: web::Query<Chapt
     Ok(HttpResponse::Ok().json(chapter_visit_info))
 }
 
+#[get("/chapters/allRaw")]
+async fn chapter_all_raw_handler(state: web::Data<AppState>) -> Result<impl Responder, WTError> {
+    let connection = state.db_pool.get()?;
+    let showing_chapters: Vec<Chapter> = web::block(move || chapters::table.load(&connection)).await?;
+    let chapter_visit_info: ChapterVisitInfo = showing_chapters.into_iter().map(|showing_chapter| OneChapterVisitInfo {
+        visit_count: showing_chapter.visit_count,
+        relative_path: showing_chapter.relative_path,
+    }).collect();
+    Ok(HttpResponse::Ok().json(chapter_visit_info))
+}
+
 #[derive(Deserialize)]
 struct ChapterRecentQuery {
     page: i32,
@@ -133,5 +144,6 @@ pub fn get_service() -> impl HttpServiceFactory {
     web::scope("/stats")
         .service(count_handler)
         .service(chapter_all_handler)
+        .service(chapter_all_raw_handler)
         .service(chapter_recent_handler)
 }
