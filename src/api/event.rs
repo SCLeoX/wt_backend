@@ -10,7 +10,7 @@ use crate::error::WTError;
 use crate::schema::wtcup_2020_votes as wtcup_x_votes;
 use actix_web::dev::HttpServiceFactory;
 
-const MAX_CHAPTER_VOTE_ID: i16 = 29;
+const MAX_CHAPTER_VOTE_ID: i16 = 31;
 const VOTE_END_TIMESTAMP: i64 = 1609426800000;
 
 #[derive(Deserialize)]
