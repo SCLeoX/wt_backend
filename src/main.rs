@@ -43,6 +43,7 @@ async fn main() -> std::io::Result<()> {
             .allowed_origin("https://rbq.desi")
             .allowed_origin("https://wt.makai.city")
             .allowed_origin("https://wt.0w0.bid")
+            .allowed_origin("https://wt.umwings.com")
             .allowed_methods(vec!["GET", "POST"])
             .allowed_header("Content-Type")
             .max_age(3600);
