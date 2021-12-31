@@ -56,6 +56,15 @@ table! {
     }
 }
 
+table! {
+    wtcup_2021_votes (id) {
+        id -> Int8,
+        user_id -> Int8,
+        chapter_vote_id -> Int2,
+        rating -> Int2,
+    }
+}
+
 joinable!(mentions -> comments (from_comment_id));
 joinable!(mentions -> users (mentioned_user_id));
 

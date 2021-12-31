@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 use crate::{AppState, DbConnection};
 use crate::api::{common, user};
 use crate::error::WTError;
-use crate::schema::wtcup_2020_votes as wtcup_x_votes;
+use crate::schema::wtcup_2021_votes as wtcup_x_votes;
 use actix_web::dev::HttpServiceFactory;
 
-const MAX_CHAPTER_VOTE_ID: i16 = 31;
-const VOTE_END_TIMESTAMP: i64 = 1609426800000;
+const MIN_CHAPTER_VOTE_ID: i16 = 32;
+const MAX_CHAPTER_VOTE_ID: i16 = 69;
+const VOTE_START_TIMESTAMP: i64 = 1640962800000;
+const VOTE_END_TIMESTAMP: i64 = 1643382000000;
 
 #[derive(Deserialize)]
 struct VotePayload {
@@ -49,9 +51,10 @@ fn vote<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, chapt
 #[post("/voteWtcup")]
 async fn vote_handler(state: web::Data<AppState>, payload: web::Json<VotePayload>) -> Result<impl Responder, WTError> {
     if common::get_current_timestamp() > VOTE_END_TIMESTAMP
+        || common::get_current_timestamp() < VOTE_START_TIMESTAMP
         || !user::is_token(&payload.token)
+        || payload.chapter_vote_id < MIN_CHAPTER_VOTE_ID
         || payload.chapter_vote_id > MAX_CHAPTER_VOTE_ID
-        || payload.chapter_vote_id < 0
         || payload.rating < 0
         || payload.rating > 5
     {
