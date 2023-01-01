@@ -44,6 +44,7 @@ async fn main() -> std::io::Result<()> {
             // .allowed_origin("http://127.0.0.1:2333")
             // .allowed_origin("http://localhost:2333")
             .allowed_origin("https://wt.tepis.me")
+            .allowed_origin("https://wt.bgme.bid")
             .allowed_origin("https://wt.bgme.me")
             .allowed_origin("https://rbq.desi")
             .allowed_origin("https://wt.0w0.bid")
