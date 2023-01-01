@@ -1,15 +1,15 @@
-use actix_web::{Either, get, HttpResponse, post, Responder, web};
 use actix_web::dev::HttpServiceFactory;
-use diesel::{insert_into, sql_query};
+use actix_web::{get, post, web, Either, HttpResponse, Responder};
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Bigint, VarChar};
+use diesel::{insert_into, sql_query};
 use indoc::indoc;
 use serde::{Deserialize, Serialize};
 
-use crate::{AppState, DbConnection};
 use crate::error::WTError;
 use crate::models::Chapter;
 use crate::schema::{chapters, visits};
+use crate::{AppState, DbConnection};
 
 use super::common;
 
@@ -42,7 +42,7 @@ fn count(connection: &DbConnection, relative_path: &str) -> Result<(), WTError> 
         insert_into(visits::table)
             .values((
                 visits::chapter_id.eq(chapter.id),
-                visits::timestamp.eq(common::get_current_timestamp())
+                visits::timestamp.eq(common::get_current_timestamp()),
             ))
             .execute(connection)?;
         diesel::update(&chapter)
@@ -53,13 +53,16 @@ fn count(connection: &DbConnection, relative_path: &str) -> Result<(), WTError> 
 }
 
 #[post("/count")]
-async fn count_handler(state: web::Data<AppState>, content: String) -> Result<Either<impl Responder, impl Responder>, WTError> {
+async fn count_handler(
+    state: web::Data<AppState>,
+    content: String,
+) -> Result<Either<impl Responder, impl Responder>, WTError> {
     if !common::is_page_name(&content) {
-        return Ok(Either::A(HttpResponse::Forbidden()));
+        return Ok(Either::Left(HttpResponse::Forbidden()));
     }
     let connection = state.db_pool.get()?;
-    web::block(move || count(&connection, &content)).await?;
-    Ok(Either::B(HttpResponse::Ok().body("<3")))
+    web::block(move || count(&connection, &content)).await??;
+    Ok(Either::Right(HttpResponse::Ok().body("<3")))
 }
 
 #[derive(Serialize)]
@@ -76,28 +79,39 @@ struct ChapterAllQuery {
 }
 
 #[get("/chapters/all")]
-async fn chapter_all_handler(state: web::Data<AppState>, query: web::Query<ChapterAllQuery>) -> Result<impl Responder, WTError> {
+async fn chapter_all_handler(
+    state: web::Data<AppState>,
+    query: web::Query<ChapterAllQuery>,
+) -> Result<impl Responder, WTError> {
     let connection = state.db_pool.get()?;
     let statement = chapters::table
         .order(chapters::visit_count.desc())
         .offset(((query.page - 1) * PAGE_SIZE).into())
         .limit(PAGE_SIZE.into());
-    let showing_chapters: Vec<Chapter> = web::block(move || statement.load::<Chapter>(&connection)).await?;
-    let chapter_visit_info: ChapterVisitInfo = showing_chapters.into_iter().map(|showing_chapter| OneChapterVisitInfo {
-        visit_count: showing_chapter.visit_count,
-        relative_path: showing_chapter.relative_path,
-    }).collect();
+    let showing_chapters: Vec<Chapter> =
+        web::block(move || statement.load::<Chapter>(&connection)).await??;
+    let chapter_visit_info: ChapterVisitInfo = showing_chapters
+        .into_iter()
+        .map(|showing_chapter| OneChapterVisitInfo {
+            visit_count: showing_chapter.visit_count,
+            relative_path: showing_chapter.relative_path,
+        })
+        .collect();
     Ok(HttpResponse::Ok().json(chapter_visit_info))
 }
 
 #[get("/chapters/allRaw")]
 async fn chapter_all_raw_handler(state: web::Data<AppState>) -> Result<impl Responder, WTError> {
     let connection = state.db_pool.get()?;
-    let showing_chapters: Vec<Chapter> = web::block(move || chapters::table.load(&connection)).await?;
-    let chapter_visit_info: ChapterVisitInfo = showing_chapters.into_iter().map(|showing_chapter| OneChapterVisitInfo {
-        visit_count: showing_chapter.visit_count,
-        relative_path: showing_chapter.relative_path,
-    }).collect();
+    let showing_chapters: Vec<Chapter> =
+        web::block(move || chapters::table.load(&connection)).await??;
+    let chapter_visit_info: ChapterVisitInfo = showing_chapters
+        .into_iter()
+        .map(|showing_chapter| OneChapterVisitInfo {
+            visit_count: showing_chapter.visit_count,
+            relative_path: showing_chapter.relative_path,
+        })
+        .collect();
     Ok(HttpResponse::Ok().json(chapter_visit_info))
 }
 
@@ -108,7 +122,10 @@ struct ChapterRecentQuery {
 }
 
 #[get("/chapters/recent")]
-async fn chapter_recent_handler(state: web::Data<AppState>, query: web::Query<ChapterRecentQuery>) -> Result<impl Responder, WTError> {
+async fn chapter_recent_handler(
+    state: web::Data<AppState>,
+    query: web::Query<ChapterRecentQuery>,
+) -> Result<impl Responder, WTError> {
     let connection = state.db_pool.get()?;
 
     #[derive(QueryableByName)]
@@ -132,11 +149,15 @@ async fn chapter_recent_handler(state: web::Data<AppState>, query: web::Query<Ch
         .bind::<Bigint, i64>(common::get_current_timestamp() - query.time_frame.get_milliseconds())
         .bind::<Bigint, i64>(PAGE_SIZE.into())
         .bind::<Bigint, i64>(((query.page - 1) * PAGE_SIZE).into());
-    let showing_chapters: Vec<RecentAggregateResult> = web::block(move || statement.get_results(&connection)).await?;
-    let chapter_visit_info: ChapterVisitInfo = showing_chapters.into_iter().map(|showing_chapter| OneChapterVisitInfo {
-        visit_count: showing_chapter.visit_count,
-        relative_path: showing_chapter.relative_path,
-    }).collect();
+    let showing_chapters: Vec<RecentAggregateResult> =
+        web::block(move || statement.get_results(&connection)).await??;
+    let chapter_visit_info: ChapterVisitInfo = showing_chapters
+        .into_iter()
+        .map(|showing_chapter| OneChapterVisitInfo {
+            visit_count: showing_chapter.visit_count,
+            relative_path: showing_chapter.relative_path,
+        })
+        .collect();
     Ok(HttpResponse::Ok().json(chapter_visit_info))
 }
 

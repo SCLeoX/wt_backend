@@ -1,13 +1,13 @@
 use std::ops::Deref;
 
-use actix_web::{Either, HttpResponse, post, Responder, web};
+use actix_web::{post, web, Either, HttpResponse, Responder};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{AppState, DbConnection};
 use crate::api::{common, user};
 use crate::error::WTError;
 use crate::schema::wtcup_2021_votes as wtcup_x_votes;
+use crate::{AppState, DbConnection};
 use actix_web::dev::HttpServiceFactory;
 
 const MIN_CHAPTER_VOTE_ID: i16 = 32;
@@ -22,7 +22,12 @@ struct VotePayload {
     rating: i16,
 }
 
-fn vote<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, chapter_vote_id: i16, rating: i16) -> Result<bool, WTError> {
+fn vote<TCon: Deref<Target = DbConnection>>(
+    connection: TCon,
+    token: String,
+    chapter_vote_id: i16,
+    rating: i16,
+) -> Result<bool, WTError> {
     let user_id = user::get_user_id(&connection, &token)?;
     if let Some(user_id) = user_id {
         let affected = if rating == 0 {
@@ -35,7 +40,7 @@ fn vote<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, chapt
                 .values((
                     wtcup_x_votes::user_id.eq(user_id),
                     wtcup_x_votes::chapter_vote_id.eq(chapter_vote_id),
-                    wtcup_x_votes::rating.eq(rating)
+                    wtcup_x_votes::rating.eq(rating),
                 ))
                 .on_conflict((wtcup_x_votes::user_id, wtcup_x_votes::chapter_vote_id))
                 .do_update()
@@ -49,7 +54,10 @@ fn vote<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, chapt
 }
 
 #[post("/voteWtcup")]
-async fn vote_handler(state: web::Data<AppState>, payload: web::Json<VotePayload>) -> Result<impl Responder, WTError> {
+async fn vote_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<VotePayload>,
+) -> Result<impl Responder, WTError> {
     if common::get_current_timestamp() > VOTE_END_TIMESTAMP
         || common::get_current_timestamp() < VOTE_START_TIMESTAMP
         || !user::is_token(&payload.token)
@@ -58,13 +66,22 @@ async fn vote_handler(state: web::Data<AppState>, payload: web::Json<VotePayload
         || payload.rating < 0
         || payload.rating > 5
     {
-        return Ok(Either::B(HttpResponse::Forbidden()));
+        return Ok(Either::Right(HttpResponse::Forbidden()));
     }
     let connection = state.db_pool.get()?;
-    if web::block(move || vote(connection, payload.0.token, payload.0.chapter_vote_id, payload.0.rating)).await? {
-        Ok(Either::A(common::simple_success()))
+    if web::block(move || {
+        vote(
+            connection,
+            payload.0.token,
+            payload.0.chapter_vote_id,
+            payload.0.rating,
+        )
+    })
+    .await??
+    {
+        Ok(Either::Left(common::simple_success()))
     } else {
-        Ok(Either::B(HttpResponse::Forbidden()))
+        Ok(Either::Right(HttpResponse::Forbidden()))
     }
 }
 
@@ -79,7 +96,10 @@ struct GetVotesSingleResponse {
     rating: i16,
 }
 
-fn get_votes<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String) -> Result<Vec<GetVotesSingleResponse>, WTError> {
+fn get_votes<TCon: Deref<Target = DbConnection>>(
+    connection: TCon,
+    token: String,
+) -> Result<Vec<GetVotesSingleResponse>, WTError> {
     let user_id = user::get_user_id(&connection, &token)?;
     Ok(if let Some(user_id) = user_id {
         wtcup_x_votes::table
@@ -92,12 +112,17 @@ fn get_votes<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String) 
 }
 
 #[post("/getWtcupVotes")]
-async fn get_votes_handler(state: web::Data<AppState>, payload: web::Json<GetVotesPayload>) -> Result<impl Responder, WTError> {
+async fn get_votes_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<GetVotesPayload>,
+) -> Result<impl Responder, WTError> {
     if common::get_current_timestamp() > VOTE_END_TIMESTAMP || !user::is_token(&payload.token) {
-        return Ok(Either::B(HttpResponse::Forbidden()));
+        return Ok(Either::Right(HttpResponse::Forbidden()));
     }
     let connection = state.db_pool.get()?;
-    Ok(Either::A(HttpResponse::Ok().json(web::block(move || get_votes(connection, payload.0.token)).await?)))
+    Ok(Either::Left(HttpResponse::Ok().json(
+        web::block(move || get_votes(connection, payload.0.token)).await??,
+    )))
 }
 
 pub fn get_service() -> impl HttpServiceFactory {

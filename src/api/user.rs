@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
-use actix_web::{Either, HttpResponse, post, Responder, web};
 use actix_web::dev::HttpServiceFactory;
+use actix_web::{post, web, Either, HttpResponse, Responder};
 use diesel::insert_into;
 use diesel::prelude::*;
 use diesel::result::Error;
@@ -9,12 +9,12 @@ use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{AppState, DbConnection};
 use crate::api::common;
 use crate::api::common::{APIResult, ErrorCode};
 use crate::error::WTError;
 use crate::models::User;
 use crate::schema::{comments, mentions, users};
+use crate::{AppState, DbConnection};
 
 pub const TOKEN_LENGTH: usize = 32;
 const MAX_USER_NAME_BYTES: usize = 64;
@@ -31,7 +31,9 @@ fn validate_display_name(display_name: &str) -> Option<ErrorCode> {
     lazy_static! {
         static ref DISPLAY_NAME_REGEX: Regex = Regex::new("^\\S(.*\\S)?$").unwrap();
     }
-    if !DISPLAY_NAME_REGEX.is_match(display_name) || display_name.chars().any(|char| char.is_control()) {
+    if !DISPLAY_NAME_REGEX.is_match(display_name)
+        || display_name.chars().any(|char| char.is_control())
+    {
         return Some(ErrorCode::NameInvalid);
     }
     None
@@ -42,7 +44,8 @@ fn validate_email(email: &str) -> Option<ErrorCode> {
         return Some(ErrorCode::EmailTooLong);
     }
     lazy_static! {
-        static ref EMAIL_REGEX: Regex = Regex::new("^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9-.]+$").unwrap();
+        static ref EMAIL_REGEX: Regex =
+            Regex::new("^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+.[a-zA-Z0-9-.]+$").unwrap();
     }
     if !EMAIL_REGEX.is_match(email) {
         return Some(ErrorCode::EmailInvalid);
@@ -92,9 +95,12 @@ struct InitResponse {
 }
 
 #[post("/init")]
-async fn init_handler(state: web::Data<AppState>, query: web::Json<InitQuery>) -> Result<impl Responder, WTError> {
+async fn init_handler(
+    state: web::Data<AppState>,
+    query: web::Json<InitQuery>,
+) -> Result<impl Responder, WTError> {
     let connection = state.db_pool.get()?;
-    if let Some(user) = web::block(move || get_user(&connection, &query.token)).await? {
+    if let Some(user) = web::block(move || get_user(&connection, &query.token)).await?? {
         let statement = mentions::table
             .inner_join(comments::table)
             .filter(mentions::timestamp.ge(user.last_checked_mentions_timestamp))
@@ -102,7 +108,7 @@ async fn init_handler(state: web::Data<AppState>, query: web::Json<InitQuery>) -
             .filter(comments::deleted.eq(false))
             .count();
         let connection = state.db_pool.get()?;
-        let new_mentions: i64 = web::block(move || statement.get_result(&connection)).await?;
+        let new_mentions: i64 = web::block(move || statement.get_result(&connection)).await??;
         Ok(HttpResponse::Ok().json(InitResponse {
             success: true,
             user_name: user.user_name,
@@ -127,22 +133,31 @@ struct RegisterResponse {
     user_name: String,
 }
 
-fn register<TCon: Deref<Target=DbConnection>>(
+fn register<TCon: Deref<Target = DbConnection>>(
     connection: TCon,
     token: String,
     user_name: String,
     display_name: String,
     email: Option<String>,
-    current_timestamp: i64
+    current_timestamp: i64,
 ) -> Result<APIResult<RegisterResponse>, WTError> {
-    if diesel::select(diesel::dsl::exists(users::table.filter(
-        users::display_name.eq(&display_name)
-            .or(users::user_name.eq(&user_name))))).get_result(&*connection)? {
+    if diesel::select(diesel::dsl::exists(
+        users::table.filter(
+            users::display_name
+                .eq(&display_name)
+                .or(users::user_name.eq(&user_name)),
+        ),
+    ))
+    .get_result(&*connection)?
+    {
         return Ok(APIResult::error(ErrorCode::NameDuplicated));
     }
     if let Some(user_email) = &email {
-        if diesel::select(diesel::dsl::exists(users::table.filter(
-            users::email.eq(user_email)))).get_result(&*connection)? {
+        if diesel::select(diesel::dsl::exists(
+            users::table.filter(users::email.eq(user_email)),
+        ))
+        .get_result(&*connection)?
+        {
             return Ok(APIResult::error(ErrorCode::EmailDuplicated));
         }
     }
@@ -152,19 +167,26 @@ fn register<TCon: Deref<Target=DbConnection>>(
             users::display_name.eq(&display_name),
             users::email.eq(&email),
             users::token.eq(&token),
-            users::last_checked_mentions_timestamp.eq(current_timestamp)
-        )).execute(&*connection)?;
-    Ok(APIResult::success_return(RegisterResponse { token, user_name }))
+            users::last_checked_mentions_timestamp.eq(current_timestamp),
+        ))
+        .execute(&*connection)?;
+    Ok(APIResult::success_return(RegisterResponse {
+        token,
+        user_name,
+    }))
 }
 
 #[post("/register")]
-async fn register_handler(state: web::Data<AppState>, payload: web::Json<RegisterPayload>) -> Result<impl Responder, WTError> {
+async fn register_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<RegisterPayload>,
+) -> Result<impl Responder, WTError> {
     if let Some(error_code) = validate_display_name(&payload.display_name) {
-        return Ok(Either::A(common::error_response_with_code(error_code)));
+        return Ok(Either::Left(common::error_response_with_code(error_code)));
     }
     if let Some(email) = &payload.email {
         if let Some(error_code) = validate_email(&email) {
-            return Ok(Either::A(common::error_response_with_code(error_code)));
+            return Ok(Either::Left(common::error_response_with_code(error_code)));
         }
     }
     let token: String = rand::thread_rng()
@@ -174,14 +196,20 @@ async fn register_handler(state: web::Data<AppState>, payload: web::Json<Registe
     let user_name = payload.display_name.replace(' ', "_").to_ascii_lowercase();
     let connection = state.db_pool.get()?;
     let current_timestamp = common::get_current_timestamp();
-    Ok(Either::B(web::block(move || register(
-        connection,
-        token,
-        user_name,
-        payload.0.display_name,
-        payload.0.email,
-        current_timestamp
-    )).await?.into_responder()))
+    Ok(Either::Right(
+        web::block(move || {
+            register(
+                connection,
+                token,
+                user_name,
+                payload.0.display_name,
+                payload.0.email,
+                current_timestamp,
+            )
+        })
+        .await??
+        .into_responder(),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -191,28 +219,40 @@ struct UpdateProfilePayload {
     email: Option<String>,
 }
 
-fn update_profile<TCon: Deref<Target=DbConnection>>(connection: TCon, token: String, display_name: String, email: Option<String>) -> Result<APIResult, WTError> {
+fn update_profile<TCon: Deref<Target = DbConnection>>(
+    connection: TCon,
+    token: String,
+    display_name: String,
+    email: Option<String>,
+) -> Result<APIResult, WTError> {
     let user = get_user(&connection, &token)?;
     if let Some(user) = user {
-        if diesel::select(diesel::dsl::exists(users::table
-            .filter(users::token.ne(&token))
-            .filter(users::display_name.eq(&display_name))
-        )).get_result(&*connection)? {
+        if diesel::select(diesel::dsl::exists(
+            users::table
+                .filter(users::token.ne(&token))
+                .filter(users::display_name.eq(&display_name)),
+        ))
+        .get_result(&*connection)?
+        {
             return Ok(APIResult::error(ErrorCode::NameDuplicated));
         }
         if let Some(user_email) = &email {
-            if diesel::select(diesel::dsl::exists(users::table
-                .filter(users::token.ne(&token))
-                .filter(users::email.eq(user_email))
-            )).get_result(&*connection)? {
+            if diesel::select(diesel::dsl::exists(
+                users::table
+                    .filter(users::token.ne(&token))
+                    .filter(users::email.eq(user_email)),
+            ))
+            .get_result(&*connection)?
+            {
                 return Ok(APIResult::error(ErrorCode::EmailDuplicated));
             }
         }
         diesel::update(&user)
             .set((
                 users::email.eq(&email),
-                users::display_name.eq(&display_name)
-            )).execute(&*connection)?;
+                users::display_name.eq(&display_name),
+            ))
+            .execute(&*connection)?;
         Ok(APIResult::success())
     } else {
         Ok(APIResult::forbidden())
@@ -220,22 +260,31 @@ fn update_profile<TCon: Deref<Target=DbConnection>>(connection: TCon, token: Str
 }
 
 #[post("/updateProfile")]
-async fn update_profile_handler(state: web::Data<AppState>, payload: web::Json<UpdateProfilePayload>) -> Result<impl Responder, WTError> {
+async fn update_profile_handler(
+    state: web::Data<AppState>,
+    payload: web::Json<UpdateProfilePayload>,
+) -> Result<impl Responder, WTError> {
     if let Some(error_code) = validate_display_name(&payload.display_name) {
-        return Ok(Either::A(common::error_response_with_code(error_code)));
+        return Ok(Either::Left(common::error_response_with_code(error_code)));
     }
     if let Some(email) = &payload.email {
         if let Some(error_code) = validate_email(email) {
-            return Ok(Either::A(common::error_response_with_code(error_code)));
+            return Ok(Either::Left(common::error_response_with_code(error_code)));
         }
     }
     let connection = state.db_pool.get()?;
-    Ok(Either::B(web::block(move || update_profile(
-        connection,
-        payload.0.token,
-        payload.0.display_name,
-        payload.0.email,
-    )).await?.into_responder()))
+    Ok(Either::Right(
+        web::block(move || {
+            update_profile(
+                connection,
+                payload.0.token,
+                payload.0.display_name,
+                payload.0.email,
+            )
+        })
+        .await??
+        .into_responder(),
+    ))
 }
 
 pub fn get_service() -> impl HttpServiceFactory {

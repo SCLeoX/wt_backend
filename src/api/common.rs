@@ -49,7 +49,9 @@ pub fn get_current_timestamp() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
-        .as_millis().try_into().expect("Hello future")
+        .as_millis()
+        .try_into()
+        .expect("Hello future")
 }
 
 pub fn is_page_name(page_name: &str) -> bool {
@@ -81,7 +83,10 @@ struct ErrorResponseWithCode {
 }
 
 pub fn error_response_with_code(code: ErrorCode) -> HttpResponse {
-    HttpResponse::Ok().json(ErrorResponseWithCode { success: false, code })
+    HttpResponse::Ok().json(ErrorResponseWithCode {
+        success: false,
+        code,
+    })
 }
 
 #[derive(Serialize)]
@@ -114,7 +119,10 @@ impl<T: Serialize> APIResult<T> {
                     #[serde(flatten)]
                     value: T,
                 }
-                Either::A(HttpResponse::Ok().json(SerializeHelper { success: true, value }))
+                Either::Left(HttpResponse::Ok().json(SerializeHelper {
+                    success: true,
+                    value,
+                }))
             }
             APIResult::Error(code) => {
                 #[derive(Serialize)]
@@ -122,11 +130,12 @@ impl<T: Serialize> APIResult<T> {
                     success: bool,
                     code: ErrorCode,
                 }
-                Either::A(HttpResponse::Ok().json(SerializeHelper { success: false, code }))
+                Either::Left(HttpResponse::Ok().json(SerializeHelper {
+                    success: false,
+                    code,
+                }))
             }
-            APIResult::Forbidden => {
-                Either::B(HttpResponse::Forbidden())
-            }
+            APIResult::Forbidden => Either::Right(HttpResponse::Forbidden()),
         }
     }
 }

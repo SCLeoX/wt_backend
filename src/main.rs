@@ -41,8 +41,8 @@ async fn main() -> std::io::Result<()> {
     .expect("Migration failed.");
     HttpServer::new(move || {
         let cors = Cors::default()
-            // .allowed_origin("http://127.0.0.1:2333")
-            // .allowed_origin("http://localhost:2333")
+            .allowed_origin("http://127.0.0.1:2333")
+            .allowed_origin("http://localhost:2333")
             .allowed_origin("https://wt.tepis.me")
             .allowed_origin("https://wt.bgme.bid")
             .allowed_origin("https://wt.bgme.me")
@@ -56,9 +56,9 @@ async fn main() -> std::io::Result<()> {
             .allowed_header("Content-Type")
             .max_age(3600);
         App::new()
-            .data(AppState {
+            .app_data(actix_web::web::Data::new(AppState {
                 db_pool: db_pool.clone(),
-            })
+            }))
             .wrap(cors)
             .service(api::analytics::get_service())
             .service(api::user::get_service())

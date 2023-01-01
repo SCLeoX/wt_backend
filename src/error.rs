@@ -1,9 +1,9 @@
 use std::error::Error;
-use std::fmt::{Display, Formatter};
 use std::fmt;
+use std::fmt::{Display, Formatter};
 
-use actix_web::{error, HttpResponse};
 use actix_web::http::{header, StatusCode};
+use actix_web::{error, HttpResponse};
 
 #[derive(Debug)]
 pub enum WTError {
@@ -18,9 +18,10 @@ impl<T: Error + Send + 'static> From<T> for WTError {
 
 impl Display for WTError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            WTError::InternalError(_) => write!(f, "An internal error occurred."),
-        }
+        write!(f, "An internal error occurred.")
+        // match self {
+        //     WTError::InternalError(_) => write!(f, "An internal error occurred."),
+        // }
     }
 }
 
@@ -33,7 +34,7 @@ impl error::ResponseError for WTError {
     fn error_response(&self) -> HttpResponse {
         eprintln!("{:?}", self);
         HttpResponse::build(self.status_code())
-            .set_header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
             .body(self.to_string())
     }
 }
