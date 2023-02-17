@@ -1,4 +1,6 @@
-table! {
+// @generated automatically by Diesel CLI.
+
+diesel::table! {
     chapters (id) {
         id -> Int4,
         relative_path -> Varchar,
@@ -6,7 +8,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     comments (id) {
         id -> Int8,
         chapter_id -> Int4,
@@ -18,7 +20,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     mentions (id) {
         id -> Int8,
         from_comment_id -> Int8,
@@ -27,7 +29,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     users (id) {
         id -> Int8,
         token -> Bpchar,
@@ -39,7 +41,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     visits (id) {
         id -> Int8,
         chapter_id -> Int4,
@@ -47,7 +49,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     wtcup_2020_votes (id) {
         id -> Int8,
         user_id -> Int8,
@@ -56,7 +58,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     wtcup_2021_votes (id) {
         id -> Int8,
         user_id -> Int8,
@@ -65,14 +67,27 @@ table! {
     }
 }
 
-joinable!(mentions -> comments (from_comment_id));
-joinable!(mentions -> users (mentioned_user_id));
+diesel::table! {
+    wtcup_2022_votes (id) {
+        id -> Int8,
+        user_id -> Int8,
+        chapter_vote_id -> Int2,
+        rating -> Int2,
+    }
+}
 
-allow_tables_to_appear_in_same_query!(
+diesel::joinable!(mentions -> comments (from_comment_id));
+diesel::joinable!(mentions -> users (mentioned_user_id));
+diesel::joinable!(wtcup_2021_votes -> users (user_id));
+diesel::joinable!(wtcup_2022_votes -> users (user_id));
+
+diesel::allow_tables_to_appear_in_same_query!(
     chapters,
     comments,
     mentions,
     users,
     visits,
     wtcup_2020_votes,
+    wtcup_2021_votes,
+    wtcup_2022_votes,
 );

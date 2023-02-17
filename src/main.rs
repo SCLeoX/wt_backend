@@ -41,8 +41,8 @@ async fn main() -> std::io::Result<()> {
     .expect("Migration failed.");
     HttpServer::new(move || {
         let cors = Cors::default()
-            .allowed_origin("http://127.0.0.1:2333")
-            .allowed_origin("http://localhost:2333")
+            // .allowed_origin("http://127.0.0.1:2333")
+            // .allowed_origin("http://localhost:2333")
             .allowed_origin("https://wt.tepis.me")
             .allowed_origin("https://wt.bgme.bid")
             .allowed_origin("https://wt.bgme.me")

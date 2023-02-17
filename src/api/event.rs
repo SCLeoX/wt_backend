@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{common, user};
 use crate::error::WTError;
-use crate::schema::wtcup_2021_votes as wtcup_x_votes;
+use crate::schema::wtcup_2022_votes as wtcup_x_votes;
 use crate::{AppState, DbConnection};
 use actix_web::dev::HttpServiceFactory;
 
-const MIN_CHAPTER_VOTE_ID: i16 = 32;
-const MAX_CHAPTER_VOTE_ID: i16 = 69;
-const VOTE_START_TIMESTAMP: i64 = 1640962800000;
-const VOTE_END_TIMESTAMP: i64 = 1643382000000;
+const MIN_CHAPTER_VOTE_ID: i16 = 70;
+const MAX_CHAPTER_VOTE_ID: i16 = 87;
+const VOTE_START_TIMESTAMP: i64 = 1672498800000;
+const VOTE_END_TIMESTAMP: i64 = 1674918000000;
 
 #[derive(Deserialize)]
 struct VotePayload {
